@@ -16,6 +16,7 @@ cobertura.ser
 # eclipse ignore
 .settings/
 node_modules/
+db-data/
 bin
 .vscode
 .project

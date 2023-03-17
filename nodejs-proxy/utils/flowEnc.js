@@ -1,5 +1,6 @@
 import crypto from 'crypto'
 import { Transform } from 'stream'
+import { userPasswd } from '../config.js'
 
 class FlowEnc {
   constructor(password) {
@@ -43,7 +44,7 @@ class FlowEnc {
         // 匿名函数确保this是指向 FlowEnc
         transform: (chunk, encoding, next) => {
           next(null, this.encodeData(chunk))
-        }
+        },
       })
     }
     // 解密流转换，不能单实例
@@ -52,7 +53,7 @@ class FlowEnc {
         transform: (chunk, encoding, next) => {
           // this.push()  用push也可以
           next(null, this.decodeData(chunk))
-        }
+        },
       })
     }
     // 不处理
@@ -60,7 +61,7 @@ class FlowEnc {
       return new Transform({
         transform: function (chunk, encoding, callback) {
           callback(null, chunk)
-        }
+        },
       })
     }
   }
@@ -82,7 +83,10 @@ class FlowEnc {
     return data
   }
 }
-
+FlowEnc.encMd5 = function (content) {
+  const md5 = crypto.createHash('md5')
+  return md5.update(userPasswd + content).digest('hex')
+}
 // const flowEnc = new FlowEnc('abc1234')
 // const encode = flowEnc.encodeData('测试的明文加密1234￥%#')
 // const decode = flowEnc.decodeData(encode)

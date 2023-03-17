@@ -1,27 +1,17 @@
 /* eslint-disable comma-dangle */
 import http from 'http'
 import https from 'node:https'
-import config from '../config.js'
+import crypto from 'crypto'
+import levelDB from './levelDB.js'
 const Agent = http.Agent
 const Agents = https.Agent
-const { flowEnc } = config
 
-// 连接数无所谓多少了
-const maxSockets = 100
-const httpsAgent = new Agents({
-  maxSockets,
-  maxFreeSockets: maxSockets,
-  keepAlive: true,
-})
-const httpAgent = new Agent({
-  maxSockets,
-  maxFreeSockets: maxSockets,
-  keepAlive: true,
-})
+// 默认maxFreeSockets=256
+const httpsAgent = new Agents({ keepAlive: true })
+const httpAgent = new Agent({ keepAlive: true })
 
 async function httpClient(request, response, encodeTransform, decodeTransform) {
-  const { method, headers, urlAddr } = request
-  console.log('request_info: ', method, urlAddr, headers)
+  const { method, headers, urlAddr, webdavConfig } = request
   // 创建请求
   const options = {
     method,
@@ -38,12 +28,14 @@ async function httpClient(request, response, encodeTransform, decodeTransform) {
       if (response.statusCode % 300 < 5) {
         // 解耦302的逻辑，先跳到本地服务接口，跟之前的实现有些不一样，这样解决更加彻底和透明
         const redirectUrl = encodeURIComponent(httpResp.headers.location)
-        const md5 = flowEnc.md5(redirectUrl)
+        const key = crypto.randomUUID()
+        // 缓存起来，默认3天，足够下载和观看了
+        await levelDB.putValue(key, { redirectUrl, webdavConfig }, 60 * 60 * 72)
         // 跳转到本地服务进行重定向下载 ，简单判断是否https那说明是请求云盘资源，后续完善其他业务判断条件 TODO
         const decode = ~redirectUrl.indexOf('https')
-        // 需要解密的话，就要经过本服务器代理请求
-        if (decode) {
-          httpResp.headers.location = `/redirect/${md5}?decode=${decode}&url=${redirectUrl}`
+        // webdavConfig不存在的话，说明是云平台自己的跳转。否则跳到自己服务器上来，经过本服务器代理就可以解密
+        if (decode && webdavConfig) {
+          httpResp.headers.location = `/redirect/${key}?decode=${decode}`
         }
         console.log('302 redirectUrl: ', httpResp.headers.location)
       }
@@ -60,7 +52,7 @@ async function httpClient(request, response, encodeTransform, decodeTransform) {
           resolve(resLength)
           console.log('httpResp响应结束...', resLength, request.url)
         })
-      // 是否需要加密
+      // 是否需要解密
       decodeTransform
         ? httpResp.pipe(decodeTransform).pipe(response)
         : httpResp.pipe(response)

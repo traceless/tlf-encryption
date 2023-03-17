@@ -5,45 +5,68 @@ import Router from 'koa-router'
 import http from 'http'
 import httpClient from './utils/httpClient.js'
 import bodyparser from 'koa-bodyparser'
-import config from './config.js'
+import FlowEnc from './utils/flowEnc.js'
+import levelDB from './utils/levelDB.js'
 
-const { flowEnc, webdavServerHost, webdavServerPort } = config
+import { webdavServer, alistServer } from './config.js'
+
 const webdavRouter = new Router()
 const restRouter = new Router()
 const app = new Koa()
 
 // 可能是302跳转过来的，md5校验，/redirect/md5?url=https://aliyun.oss
-webdavRouter.all('/redirect/:md5', async (ctx) => {
+webdavRouter.all('/redirect/:key', async (ctx) => {
   const request = ctx.req
   const response = ctx.res
   // 这里还是要encodeURIComponent ，因为http服务器会自动对url进行decodeURIComponent
-  if (flowEnc.md5(encodeURIComponent(ctx.query.url)) !== ctx.params.md5) {
-    ctx.body = { success: false }
+  const data = await levelDB.getValue(ctx.params.key)
+  if (data === null) {
+    ctx.body = 'no found'
     return
   }
+  const { webdavConfig, redirectUrl } = data
+  console.log('@@redirect_url: ', request.url, redirectUrl)
   // 设置请求地址和是否要解密
-  request.urlAddr = ctx.query.url
+  const flowEnc = new FlowEnc(webdavConfig.flowPassword)
+  request.urlAddr = decodeURIComponent(redirectUrl)
   const decodeTransform = ctx.query.decode ? flowEnc.decodeTransform() : null
   delete request.headers.host
   // 请求实际服务资源
   await httpClient(request, response, null, decodeTransform)
-  console.log('----@@@@finish 302---', ctx.query.decode, request.urlAddr)
+  console.log('----finish 302---', ctx.query.decode, request.urlAddr)
 })
 
-// let authorization = null
-webdavRouter.all(/\/*/, async (ctx) => {
-  const request = ctx.req
-  const response = ctx.res
-  // request.headers.authorization = request.headers.authorization ? authorization = request.headers.authorization : authorization
-  request.headers.host = webdavServerHost + ':' + webdavServerPort
-  request.urlAddr = `http://${request.headers.host}` + request.url
-  // 如果是上传文件，那么进行流加密
-  if (request.method.toLocaleUpperCase() === 'PUT') {
-    await httpClient(request, response, flowEnc.encodeTransform())
-    return
+// 创建middleware，闭包方式
+function proxyInit(webdavConfig) {
+  const { serverHost, serverPort, flowPassword } = webdavConfig
+  const flowEnc = new FlowEnc(flowPassword)
+  // let authorization = null
+  return async (ctx, next) => {
+    const request = ctx.req
+    const response = ctx.res
+    const { method, headers, urlAddr } = request
+    console.log('@@request_info: ', method, urlAddr, headers)
+    // request.headers.authorization = request.headers.authorization ? authorization = request.headers.authorization : authorization
+    request.headers.host = serverHost + ':' + serverPort
+    request.urlAddr = `http://${request.headers.host}${request.url}`
+    request.webdavConfig = webdavConfig
+    // 如果是上传文件，那么进行流加密
+    if (request.method.toLocaleUpperCase() === 'PUT') {
+      await httpClient(request, response, flowEnc.encodeTransform())
+      return
+    }
+    await httpClient(request, response)
   }
-  await httpClient(request, response)
+}
+// 初始化webdav路由
+webdavServer.forEach((webdavConfig) => {
+  if (webdavConfig.enable) {
+    webdavRouter.all(new RegExp(webdavConfig.path), proxyInit(webdavConfig))
+  }
 })
+// 初始化alist的路由
+webdavRouter.all(new RegExp(alistServer.path), proxyInit(alistServer))
+
 // 这个是代理webdav的路由控制
 app.use(webdavRouter.routes()).use(webdavRouter.allowedMethods())
 
@@ -64,7 +87,6 @@ app.use(async (ctx) => {
 
 const server = http.createServer(app.callback())
 server.maxConnections = 1000
-// server.keepAliveTimeout = 50 * 1000;
 const port = 5344
 server.listen(port, () => console.log('服务启动成功: ' + port))
 setInterval(() => {
