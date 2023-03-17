@@ -7,14 +7,28 @@ import httpClient from './utils/httpClient.js'
 import bodyparser from 'koa-bodyparser'
 import FlowEnc from './utils/flowEnc.js'
 import levelDB from './utils/levelDB.js'
-
 import { webdavServer, alistServer } from './config.js'
+import { pathExec } from './utils/commonUtil.js'
 
 const webdavRouter = new Router()
 const restRouter = new Router()
 const app = new Koa()
 
-// 可能是302跳转过来的，md5校验，/redirect/md5?url=https://aliyun.oss
+// ======================/proxy是实现本服务的业务==============================
+
+// bodyparser解析body
+const bodyparserMw = bodyparser({ enableTypes: ['json', 'form', 'text'] })
+restRouter.all(/\/proxy\/*/, bodyparserMw)
+// TODO
+restRouter.all('/proxy/config', async (ctx) => {
+  console.log('------proxy------', ctx.req.url)
+  ctx.body = { success: true }
+})
+app.use(restRouter.routes()).use(restRouter.allowedMethods())
+
+// ======================下面是实现webdav代理的业务==============================
+
+// 可能是302跳转过来的下载的,/redirect/key?decode=0
 webdavRouter.all('/redirect/:key', async (ctx) => {
   const request = ctx.req
   const response = ctx.res
@@ -38,20 +52,20 @@ webdavRouter.all('/redirect/:key', async (ctx) => {
 
 // 创建middleware，闭包方式
 function proxyInit(webdavConfig) {
-  const { serverHost, serverPort, flowPassword } = webdavConfig
+  const { serverHost, serverPort, flowPassword, encPath } = webdavConfig
   const flowEnc = new FlowEnc(flowPassword)
   // let authorization = null
   return async (ctx, next) => {
     const request = ctx.req
     const response = ctx.res
-    const { method, headers, urlAddr } = request
-    console.log('@@request_info: ', method, urlAddr, headers)
     // request.headers.authorization = request.headers.authorization ? authorization = request.headers.authorization : authorization
     request.headers.host = serverHost + ':' + serverPort
     request.urlAddr = `http://${request.headers.host}${request.url}`
     request.webdavConfig = webdavConfig
+    const { method, headers, urlAddr } = request
+    console.log('@@request_info: ', method, urlAddr, headers)
     // 如果是上传文件，那么进行流加密
-    if (request.method.toLocaleUpperCase() === 'PUT') {
+    if (request.method.toLocaleUpperCase() === 'PUT' && pathExec(encPath, request.url)) {
       await httpClient(request, response, flowEnc.encodeTransform())
       return
     }
@@ -70,15 +84,6 @@ webdavRouter.all(new RegExp(alistServer.path), proxyInit(alistServer))
 // 这个是代理webdav的路由控制
 app.use(webdavRouter.routes()).use(webdavRouter.allowedMethods())
 
-// ======================下面是实现自己的业务==============================
-
-app.use(bodyparser({ enableTypes: ['json', 'form', 'text'] }))
-// TODO
-restRouter.all('/proxy', async (ctx) => {
-  console.log('------proxy------', ctx.req.url)
-  ctx.body = { success: true }
-})
-app.use(restRouter.routes()).use(restRouter.allowedMethods())
 // 兜底处理
 app.use(async (ctx) => {
   console.log('------404------', ctx.req.url)

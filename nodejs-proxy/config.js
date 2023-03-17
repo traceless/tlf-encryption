@@ -8,7 +8,7 @@ export const alistServer = {
   serverHost: '192.168.8.240',
   serverPort: 5244,
   flowPassword: '123456', // 加密的密码
-  encPath: ['/dav/aliyun/myphoto/*', '/dav/189cloud/*'], // 拦截的路径，支持js正则，不能是 "/*" 和 "/proxy/*"，因为已经占用
+  encPath: ['/d/aliy/test/*', '/dav/aliy/test/*', '/dav/189cloud/*'], // 注意 /d/是alist的下载路径，确保也拦截，支持js正则，不能是 "/*" 和 "/proxy/*"，因为已经占用
 }
 
 // 支持其他普通的webdav（当然也可以挂载alist的webdav）
