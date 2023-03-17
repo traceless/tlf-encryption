@@ -32,17 +32,7 @@ class FlowEnc {
         this.passwordMd5 = crypto.createHash("md5").digest('hex')
         this.encode = encode;
         this.decode = Buffer.from(decode);
-        let encodeStr = ''
-        let decodeStr = ''
-        this.encode.forEach(e => {
-            encodeStr += (e * 1) + ','
-        })
-        this.decode.forEach(e => {
-            decodeStr += (e * 1) + ','
-        })
-        console.log('encode:', encodeStr)
-        console.log('decode:', decodeStr)
-        // 解密流转换，不能多例子
+        // MD5
         this.md5 = function (content) {
             const md5 = crypto.createHash("md5");
             return md5.update(this.passwordMd5 + content).digest('hex');
@@ -56,7 +46,7 @@ class FlowEnc {
                 }
             });
         }
-        // 解密流转换，不能多例子
+        // 解密流转换，不能单实例
         this.decodeTransform = function () {
             return new Transform({
                 transform: (chunk, encoding, next) => {
@@ -74,7 +64,7 @@ class FlowEnc {
             });
         }
     }
-
+    // 加密方法
     encodeData(data) {
         data = Buffer.from(data)
         for (let i = data.length; i--;) {
@@ -82,7 +72,7 @@ class FlowEnc {
         }
         return data;
     }
-
+    // 解密方法
     decodeData(data) {
         for (let i = data.length; i--;) {
             data[i] = this.decode[data[i] % 16] ^ data[i] & 0xFF;

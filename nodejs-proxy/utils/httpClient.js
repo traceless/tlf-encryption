@@ -31,8 +31,11 @@ async function httpClient(request, response, encodeTransform, decodeTransform) {
                 const redirectUrl = encodeURIComponent(httpResp.headers.location)
                 const md5 = flowEnc.md5(redirectUrl)
                 // 跳转到本地服务进行重定向下载 ，简单判断是否https那说明是请求云盘资源，后续完善其他业务判断条件 TODO
-                const decode = 0
-                httpResp.headers.location = `/redirect/${md5}?decode=${decode}&url=${redirectUrl}`
+                const decode = ~redirectUrl.indexOf("https")
+                // 需要解密的话，就要经过本服务器代理请求
+                if(decode){
+                    httpResp.headers.location = `/redirect/${md5}?decode=${decode}&url=${redirectUrl}`
+                }
                 console.log('302 redirectUrl: ', httpResp.headers.location)
             }
             // 设置headers
