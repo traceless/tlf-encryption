@@ -6,13 +6,13 @@ const Agents = https.Agent;
 const { flowEnc } = config
 
 // 连接数无所谓多少了
-const maxSockets = 50;
+const maxSockets = 100;
 const httpsAgent = new Agents({ maxSockets, maxFreeSockets: maxSockets, keepAlive: true })
 const httpAgent = new Agent({ maxSockets, maxFreeSockets: maxSockets, keepAlive: true })
 
-async function httpClient(request, response, callback, redirect = 3) {
+async function httpClient(request, response, encodeTransform, decodeTransform) {
     const { method, headers, urlAddr } = request;
-    console.log('request_info: ', headers, method, urlAddr)
+    console.log('request_info: ', method, urlAddr, headers)
     // 创建请求
     const options = {
         method,
@@ -26,25 +26,18 @@ async function httpClient(request, response, callback, redirect = 3) {
         const httpReq = httpRequest.request(urlAddr, options, async httpResp => {
             console.log('@@statusCode', httpResp.statusCode, httpResp.headers)
             response.statusCode = httpResp.statusCode
+            if (response.statusCode % 300 < 5) {
+                // 解耦302的逻辑，先跳到本地服务接口，跟之前的实现有些不一样，这样解决更加彻底和透明
+                const redirectUrl = encodeURIComponent(httpResp.headers.location)
+                const md5 = flowEnc.md5(redirectUrl)
+                // 跳转到本地服务进行重定向下载 ，简单判断是否https那说明是请求云盘资源，后续完善其他业务判断条件 TODO
+                const decode = 0
+                httpResp.headers.location = `/redirect/${md5}?decode=${decode}&url=${redirectUrl}`
+                console.log('302 redirectUrl: ', httpResp.headers.location)
+            }
+            // 设置headers
             for (let key in httpResp.headers) {
                 response.setHeader(key, httpResp.headers[key])
-            }
-            if (response.statusCode === 302 || response.statusCode === 301) {
-                if (redirect <= 0) {
-                    // 防止无限重定向, 结束重定向
-                    console.log('httpResp结束重定向...')
-                    response.end()
-                    resolve(0)
-                    return
-                }
-                // 重新请求一次，把流量代理进来
-                request.urlAddr = httpResp.headers.location
-                delete request.headers.host
-                delete request.headers.authorization
-                request.method = 'GET'
-                console.log('302 redirect: ', request.urlAddr)
-                const length = await httpClient(request, response, (req) => { req.end() }, redirect - 1)
-                resolve(length)
             }
             let resLength = 0;
             httpResp.on('data', (chunk) => {
@@ -53,16 +46,11 @@ async function httpClient(request, response, callback, redirect = 3) {
                 resolve(resLength)
                 console.log('httpResp响应结束...', resLength, request.url)
             });
-            // 这里简单如果是https那说明是请求云盘资源，还有识别header来判断是否下载请求 TODO
-            if (~urlAddr.indexOf("https")) {
-                // 可以在这里添加条件判断进行加解密
-                httpResp.pipe(flowEnc.decodeTransform()).pipe(response);
-                return
-            }
-            // 直接透传
-            httpResp.pipe(response)
+            // 是否需要加密
+            decodeTransform ? httpResp.pipe(decodeTransform).pipe(response) : httpResp.pipe(response)
         })
-        callback(httpReq)
+        // 是否需要加密
+        encodeTransform ? request.pipe(encodeTransform).pipe(httpReq) : request.pipe(httpReq)
     })
 }
 export default httpClient

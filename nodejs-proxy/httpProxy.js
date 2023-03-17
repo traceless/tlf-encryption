@@ -17,7 +17,7 @@ let authorization = null
 
 // http客户端请求
 function httpClient(request, response, redirect = 3) {
-	const { method, headers, urlAddr, reqBody } = request;
+	const { method, headers, urlAddr } = request;
 	console.log('request_info: ', headers, method, urlAddr)
 	// 创建请求
 	const options = {

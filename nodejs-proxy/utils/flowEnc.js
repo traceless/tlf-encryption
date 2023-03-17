@@ -28,6 +28,8 @@ class FlowEnc {
                 }
             }
         }
+        this.password = password
+        this.passwordMd5 = crypto.createHash("md5").digest('hex')
         this.encode = encode;
         this.decode = Buffer.from(decode);
         let encodeStr = ''
@@ -40,6 +42,11 @@ class FlowEnc {
         })
         console.log('encode:', encodeStr)
         console.log('decode:', decodeStr)
+        // 解密流转换，不能多例子
+        this.md5 = function (content) {
+            const md5 = crypto.createHash("md5");
+            return md5.update(this.passwordMd5 + content).digest('hex');
+        }
         // 加密流转换
         this.encodeTransform = function () {
             return new Transform({
