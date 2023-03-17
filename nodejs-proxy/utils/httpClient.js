@@ -1,9 +1,9 @@
 import http from 'http';
-import FlowEnc from './flowEnc.js';
 import https from 'node:https';
+import config from '../config.js';
 const Agent = http.Agent;
 const Agents = https.Agent;
-const flowEnc = new FlowEnc("123456")
+const { flowEnc } = config
 
 // 连接数无所谓多少了
 const maxSockets = 50;

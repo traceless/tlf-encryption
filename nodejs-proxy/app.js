@@ -37,7 +37,7 @@ app.use(webdavRouter.routes()).use(webdavRouter.allowedMethods());
 
 // 下面是实现自己的业务
 app.use(bodyparser({ enableTypes: ["json", "form", "text"] }));
-restRouter.all("/proxy", async ctx => {
+restRouter.all("/proxy", bodyparser({ enableTypes: ["json", "form", "text"] }), async ctx => {
   console.log("------proxy------", ctx.req.url);
   ctx.body = { success: true };
 })
