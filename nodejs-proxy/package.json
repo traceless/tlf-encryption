@@ -21,5 +21,15 @@
     "webdav": "^5.0.0-r3",
     "webdav-server": "^2.6.2",
     "websocket": "^1.0.33"
+  },
+  "devDependencies": {
+    "@typescript-eslint/eslint-plugin": "^5.55.0",
+    "@typescript-eslint/parser": "^5.55.0",
+    "eslint": "^8.36.0",
+    "eslint-config-standard": "^17.0.0",
+    "eslint-plugin-import": "^2.27.5",
+    "eslint-plugin-n": "^15.6.1",
+    "eslint-plugin-promise": "^6.1.1",
+    "prettier": "^2.8.4"
   }
 }

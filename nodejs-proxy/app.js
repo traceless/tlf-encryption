@@ -1,23 +1,24 @@
-import koa from 'koa';
-import Router from 'koa-router';
-import http from 'http';
-import httpClient from './utils/httpClient.js';
-import bodyparser from 'koa-bodyparser';
-import config from './config.js';
+'use strict'
+
+import Koa from 'koa'
+import Router from 'koa-router'
+import http from 'http'
+import httpClient from './utils/httpClient.js'
+import bodyparser from 'koa-bodyparser'
+import config from './config.js'
 
 const { flowEnc, webdavServerHost, webdavServerPort } = config
-const webdavRouter = new Router();
-const restRouter = new Router();
-const app = new koa()
-let authorization = null
+const webdavRouter = new Router()
+const restRouter = new Router()
+const app = new Koa()
 
 // 可能是302跳转过来的，md5校验，/redirect/md5?url=https://aliyun.oss
-webdavRouter.all("/redirect/:md5", async (ctx) => {
-  const request = ctx.req;
-  const response = ctx.res;
+webdavRouter.all('/redirect/:md5', async (ctx) => {
+  const request = ctx.req
+  const response = ctx.res
   // 这里还是要encodeURIComponent ，因为http服务器会自动对url进行decodeURIComponent
   if (flowEnc.md5(encodeURIComponent(ctx.query.url)) !== ctx.params.md5) {
-    ctx.body = { success: false };
+    ctx.body = { success: false }
     return
   }
   // 设置请求地址和是否要解密
@@ -26,15 +27,14 @@ webdavRouter.all("/redirect/:md5", async (ctx) => {
   delete request.headers.host
   // 请求实际服务资源
   await httpClient(request, response, null, decodeTransform)
-  console.log("----@@@@finish 302---", ctx.query.decode, request.urlAddr);
-});
+  console.log('----@@@@finish 302---', ctx.query.decode, request.urlAddr)
+})
 
+// let authorization = null
 webdavRouter.all(/\/*/, async (ctx) => {
-  const request = ctx.req;
-  const response = ctx.res;
-  // 缓存起来，很多客户端并不是每次都会携带 authorization，导致上传文件一些异常，不想catch了，直接每次携带 authorization
-  request.headers.authorization = request.headers.authorization ? authorization = request.headers.authorization : authorization
-  // headers 所有都透传，不删除，host需要单独修改，实测没影响
+  const request = ctx.req
+  const response = ctx.res
+  // request.headers.authorization = request.headers.authorization ? authorization = request.headers.authorization : authorization
   request.headers.host = webdavServerHost + ':' + webdavServerPort
   request.urlAddr = `http://${request.headers.host}` + request.url
   // 如果是上传文件，那么进行流加密
@@ -43,30 +43,30 @@ webdavRouter.all(/\/*/, async (ctx) => {
     return
   }
   await httpClient(request, response)
-});
+})
 // 这个是代理webdav的路由控制
-app.use(webdavRouter.routes()).use(webdavRouter.allowedMethods());
+app.use(webdavRouter.routes()).use(webdavRouter.allowedMethods())
 
 // ======================下面是实现自己的业务==============================
 
-app.use(bodyparser({ enableTypes: ["json", "form", "text"] }));
+app.use(bodyparser({ enableTypes: ['json', 'form', 'text'] }))
 // TODO
-restRouter.all("/proxy", async ctx => {
-  console.log("------proxy------", ctx.req.url);
-  ctx.body = { success: true };
+restRouter.all('/proxy', async (ctx) => {
+  console.log('------proxy------', ctx.req.url)
+  ctx.body = { success: true }
 })
-app.use(restRouter.routes()).use(restRouter.allowedMethods());
+app.use(restRouter.routes()).use(restRouter.allowedMethods())
 // 兜底处理
 app.use(async (ctx) => {
-  console.log("------404------", ctx.req.url);
-  ctx.body = { success: true };
-});
+  console.log('------404------', ctx.req.url)
+  ctx.body = { success: true }
+})
 
-const server = http.createServer(app.callback());
-server.maxConnections = 1000;
+const server = http.createServer(app.callback())
+server.maxConnections = 1000
 // server.keepAliveTimeout = 50 * 1000;
-const port = 5344;
-server.listen(port, () => console.log("服务启动成功: " + port));
+const port = 5344
+server.listen(port, () => console.log('服务启动成功: ' + port))
 setInterval(() => {
-  console.log('server_connections', server._connections);
-}, 5000);
+  console.log('server_connections', server._connections)
+}, 5000)
