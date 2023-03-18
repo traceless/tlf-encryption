@@ -25,5 +25,13 @@ class LevelDB extends Level {
 }
 const levelDB = new LevelDB(path.resolve('db-data'), { valueEncoding: 'json' })
 // 定时清除过期的数据
-setInterval(async () => {}, 20000)
+setInterval(async () => {
+  for await (const [key, data] of levelDB.iterator()) {
+    const { expire } = data
+    if (expire && expire < Date.now()) {
+      console.log('@@expire:', key, expire, Date.now())
+      levelDB.del(key)
+    }
+  }
+}, 30 * 1000)
 export default levelDB
