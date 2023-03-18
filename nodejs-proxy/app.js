@@ -3,7 +3,8 @@
 import Koa from 'koa'
 import Router from 'koa-router'
 import http from 'http'
-import httpClient from './utils/httpClient.js'
+import crypto from 'crypto'
+import { httpProxy, httpClient } from './utils/httpClient.js'
 import bodyparser from 'koa-bodyparser'
 import FlowEnc from './utils/flowEnc.js'
 import levelDB from './utils/levelDB.js'
@@ -28,7 +29,7 @@ app.use(restRouter.routes()).use(restRouter.allowedMethods())
 
 // ======================下面是实现webdav代理的业务==============================
 
-// 可能是302跳转过来的下载的,/redirect/key?decode=0
+// 可能是302跳转过来的下载的,/redirect?key=34233&decode=0
 webdavRouter.all('/redirect/:key', async (ctx) => {
   const request = ctx.req
   const response = ctx.res
@@ -42,23 +43,36 @@ webdavRouter.all('/redirect/:key', async (ctx) => {
   console.log('@@redirect_url: ', request.url, redirectUrl)
   // 设置请求地址和是否要解密
   const flowEnc = new FlowEnc(webdavConfig.flowPassword)
-  request.urlAddr = decodeURIComponent(redirectUrl)
-  const decodeTransform = ctx.query.decode ? flowEnc.decodeTransform() : null
+  // 重新传回去
+  const decode = ctx.query.decode
+  request.url = decodeURIComponent(ctx.query.lastUrl)
+  request.urlAddr = redirectUrl
+  // 默认判断路径来识别是否要解密，如果有decode参数，那么则按decode来处理，这样可以让用户手动处理是否解密
+  let decodeTransform = pathExec(webdavConfig.encPath, request.url) ? flowEnc.decodeTransform() : null
+  if (decode) {
+    decodeTransform = decode !== '0' ? flowEnc.decodeTransform() : null
+  }
   delete request.headers.host
+  // aliyun不允许这个referer，不然会出现403
+  delete request.headers.referer
+  request.webdavConfig = webdavConfig
   // 请求实际服务资源
-  await httpClient(request, response, null, decodeTransform)
-  console.log('----finish 302---', ctx.query.decode, request.urlAddr)
+  await httpProxy(request, response, null, decodeTransform)
+  console.log('----finish 302---', decode, request.urlAddr, decodeTransform === null)
 })
 
 // 创建middleware，闭包方式
-function proxyInit(webdavConfig) {
+function proxyInit(webdavConfig, webdavProxy) {
   const { serverHost, serverPort, flowPassword, encPath } = webdavConfig
   const flowEnc = new FlowEnc(flowPassword)
-  // let authorization = null
+  let authorization = webdavProxy
   return async (ctx, next) => {
     const request = ctx.req
     const response = ctx.res
-    // request.headers.authorization = request.headers.authorization ? authorization = request.headers.authorization : authorization
+    if (authorization) {
+      // 缓存起来，提高效率
+      request.headers.authorization = request.headers.authorization ? (authorization = request.headers.authorization) : authorization
+    }
     request.headers.host = serverHost + ':' + serverPort
     request.urlAddr = `http://${request.headers.host}${request.url}`
     request.webdavConfig = webdavConfig
@@ -66,29 +80,52 @@ function proxyInit(webdavConfig) {
     console.log('@@request_info: ', method, urlAddr, headers)
     // 如果是上传文件，那么进行流加密
     if (request.method.toLocaleUpperCase() === 'PUT' && pathExec(encPath, request.url)) {
-      await httpClient(request, response, flowEnc.encodeTransform())
+      await httpProxy(request, response, flowEnc.encodeTransform())
       return
     }
-    await httpClient(request, response)
+    await httpProxy(request, response)
   }
 }
-// 初始化webdav路由
+// 初始化webdav路由，这里可以优化成动态路由，只不过没啥必要，修改配置后直接重启就好了
 webdavServer.forEach((webdavConfig) => {
   if (webdavConfig.enable) {
-    webdavRouter.all(new RegExp(webdavConfig.path), proxyInit(webdavConfig))
+    webdavRouter.all(new RegExp(webdavConfig.path), proxyInit(webdavConfig, true))
   }
 })
-// 初始化alist的路由
-webdavRouter.all(new RegExp(alistServer.path), proxyInit(alistServer))
+/* =================================== 单独处理alist的逻辑====================================== */
 
-// 这个是代理webdav的路由控制
-app.use(webdavRouter.routes()).use(webdavRouter.allowedMethods())
-
-// 兜底处理
-app.use(async (ctx) => {
-  console.log('------404------', ctx.req.url)
-  ctx.body = { success: true }
+// 初始化alist的路由，新增/d/* 路由
+const downloads = []
+for (const key in alistServer.encPath) {
+  downloads.push('/d' + alistServer.encPath[key])
+  downloads.push('/dav' + alistServer.encPath[key])
+}
+alistServer.encPath = alistServer.encPath.concat(downloads)
+// 处理视频播放的问题
+webdavRouter.all('/api/fs/get', bodyparserMw, async (ctx, next) => {
+  const request = ctx.req
+  const response = ctx.res
+  const { path } = ctx.request.body
+  request.headers.host = alistServer.serverHost + ':' + alistServer.serverPort
+  request.urlAddr = `http://${request.headers.host}${request.url}`
+  request.webdavConfig = alistServer
+  request.reqBody = JSON.stringify(ctx.request.body)
+  // 判断打开的文件是否要解密，要解密则替换url，否则透传
+  const respBody = await httpClient(request, response)
+  const result = JSON.parse(respBody)
+  if (pathExec(alistServer.encPath, path)) {
+    // 修改返回的响应，匹配到要解密，就302跳转到本服务上进行代理流量
+    console.log('@@getFile ', path, result)
+    const key = crypto.randomUUID()
+    await levelDB.putValue(key, { redirectUrl: result.data.raw_url, webdavConfig: alistServer }, 60 * 60 * 72) // 缓存起来，默认3天，足够下载和观看了
+    result.data.raw_url = `/redirect/${key}?decode=1&lastUrl=${encodeURIComponent(path)}`
+  }
+  ctx.body = result
 })
+
+webdavRouter.all(new RegExp(alistServer.path), proxyInit(alistServer))
+// 使用路由控制
+app.use(webdavRouter.routes()).use(webdavRouter.allowedMethods())
 
 const server = http.createServer(app.callback())
 server.maxConnections = 1000

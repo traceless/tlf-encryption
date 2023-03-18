@@ -11,8 +11,9 @@ const Agents = https.Agent
 const httpsAgent = new Agents({ keepAlive: true })
 const httpAgent = new Agent({ keepAlive: true })
 
-async function httpClient(request, response, encodeTransform, decodeTransform) {
+export async function httpProxy(request, response, encodeTransform, decodeTransform) {
   const { method, headers, urlAddr, webdavConfig } = request
+  console.log('request_info: ', method, urlAddr, headers)
   // 创建请求
   const options = {
     method,
@@ -26,20 +27,18 @@ async function httpClient(request, response, encodeTransform, decodeTransform) {
     const httpReq = httpRequest.request(urlAddr, options, async (httpResp) => {
       console.log('@@statusCode', httpResp.statusCode, httpResp.headers)
       response.statusCode = httpResp.statusCode
-
-      // 解耦301-304的逻辑，先跳到本地服务接口，跟之前的实现有些不一样，这样解决更加彻底和透明
       if (response.statusCode % 300 < 5) {
         // 可能出现304，redirectUrl = undefined
-        const redirectUrl = encodeURIComponent(httpResp.headers.location) || '-'
+        const redirectUrl = httpResp.headers.location || '-'
         // 跳转到本地服务进行重定向下载 ，简单判断是否https那说明是请求云盘资源，后续完善其他业务判断条件 TODO
         const decode = ~redirectUrl.indexOf('https')
-        // webdavConfig不存在的话，说明是云平台自己的跳转/redirect/:key。否则跳到自己服务器上来，经过本服务器代理就可以解密
+        // 因为天翼云会多次302，所以这里要保持，跳转后的路径保持跟上次一致，经过本服务器代理就可以解密
         if (decode && webdavConfig && pathExec(webdavConfig.encPath, request.url)) {
           const key = crypto.randomUUID()
           await levelDB.putValue(key, { redirectUrl, webdavConfig }, 60 * 60 * 72) // 缓存起来，默认3天，足够下载和观看了
-          httpResp.headers.location = `/redirect/${key}?decode=${decode}`
+          httpResp.headers.location = `/redirect/${key}?decode=${decode}&lastUrl=${encodeURIComponent(request.url)}`
         }
-        console.log('302 redirectUrl: ', redirectUrl)
+        console.log('302 redirectUrl:', redirectUrl)
       }
       // 设置headers
       for (const key in httpResp.headers) {
@@ -61,4 +60,39 @@ async function httpClient(request, response, encodeTransform, decodeTransform) {
     encodeTransform ? request.pipe(encodeTransform).pipe(httpReq) : request.pipe(httpReq)
   })
 }
-export default httpClient
+
+export async function httpClient(request, response, encodeTransform, decodeTransform) {
+  const { method, headers, urlAddr, reqBody } = request
+  console.log('request_info: ', method, urlAddr, headers)
+  // 创建请求
+  const options = {
+    method,
+    headers,
+    agent: ~urlAddr.indexOf('https') ? httpsAgent : httpAgent,
+    rejectUnauthorized: false,
+  }
+  const httpRequest = ~urlAddr.indexOf('https') ? https : http
+  return new Promise((resolve, reject) => {
+    // 处理重定向的请求，让下载的流量经过代理服务器
+    const httpReq = httpRequest.request(urlAddr, options, async (httpResp) => {
+      console.log('@@statusCode', httpResp.statusCode, httpResp.headers)
+      response.statusCode = httpResp.statusCode
+      // 设置headers
+      for (const key in httpResp.headers) {
+        response.setHeader(key, httpResp.headers[key])
+      }
+      let result = ''
+      httpResp
+        .on('data', (chunk) => {
+          result += chunk
+        })
+        .on('end', () => {
+          resolve(result)
+          console.log('httpResp响应结束...', result, request.url)
+        })
+    })
+    // 是否需要加密
+    httpReq.write(reqBody)
+    httpReq.end()
+  })
+}
